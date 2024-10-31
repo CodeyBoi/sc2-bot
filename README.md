@@ -21,3 +21,6 @@ To run the bot execute the following commands;
 2. `cargo run`
 
 *Note:* On Windows I could only get this running correctly via Git Bash, and then by running `export SC2PATH='/c/Program Files (x86)/StarCraft II'; cargo run`.
+
+# Reading docs
+Documentation can be compiled and opened in a web browser by running `cargo doc --open`.
