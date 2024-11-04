@@ -32,17 +32,13 @@ impl Player for TerranBot {
     }
 
     fn on_step(&mut self, iteration: usize) -> SC2Result<()> {
-        if iteration % 10 == 0 {
-            println!(
-                "Tick {}: Minerals: {}, Gas: {}",
-                iteration, self.minerals, self.vespene
-            );
+        if iteration % 2 == 0 {
+            self.train_workers();
+            self.build_townhall();
+            self.train_army();
+            self.build_supply();
+            self.build_army_buildings();
         }
-        self.train_workers();
-        self.build_townhall();
-        self.train_army();
-        self.build_supply();
-        self.build_army_buildings();
         Ok(())
     }
 
@@ -159,7 +155,7 @@ impl TerranBot {
     }
 
     fn build_supply(&mut self) {
-        if self.supply_left < 3
+        if self.supply_left < 5
             && self.counter().ordered().count(UnitTypeId::SupplyDepot) == 0
             && self.can_afford(UnitTypeId::SupplyDepot, false)
         {
@@ -233,8 +229,12 @@ impl TerranBot {
     fn build_army_buildings(&mut self) {
         use UnitTypeId as UID;
         for building in [UID::Barracks, UID::Factory, UID::Starport] {
-            if self.counter().all().count(building) == 0 && self.build_in_base(building).is_ok() {
-            } else {
+            if self.counter().all().count(building) == 0
+                && TECH_REQUIREMENTS
+                    .get(&building)
+                    .is_none_or(|&r| self.counter().count(r) != 0)
+            {
+                self.build_in_base(building).unwrap_or_default();
             }
         }
     }

@@ -10,6 +10,7 @@ fn main() -> SC2Result<()> {
         Computer::new(Race::Random, Difficulty::Medium, None),
         "CyberForestLE",
         LaunchOptions {
+            realtime: true,
             ..Default::default()
         },
     )
