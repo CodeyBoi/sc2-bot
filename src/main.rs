@@ -1,3 +1,5 @@
+mod army;
+mod base;
 mod bot;
 
 use bot::TerranBot;
@@ -10,7 +12,7 @@ fn main() -> SC2Result<()> {
         Computer::new(Race::Random, Difficulty::Medium, None),
         "CyberForestLE",
         LaunchOptions {
-            realtime: true,
+            // realtime: true,
             ..Default::default()
         },
     )
