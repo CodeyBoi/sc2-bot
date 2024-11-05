@@ -9,10 +9,10 @@ fn main() -> SC2Result<()> {
     let mut bot = TerranBot::default();
     run_vs_computer(
         &mut bot,
-        Computer::new(Race::Random, Difficulty::Medium, None),
-        "CyberForestLE",
+        Computer::new(Race::Random, Difficulty::Harder, None),
+        "PortAleksanderLE",
         LaunchOptions {
-            // realtime: true,
+            realtime: true,
             ..Default::default()
         },
     )

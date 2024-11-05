@@ -34,7 +34,7 @@ impl Player for TerranBot {
 
     fn on_step(&mut self, _iteration: usize) -> SC2Result<()> {
         self.train_workers();
-        self.build_expansion();
+        self.process_townhalls();
         self.train_army();
         self.build_supply();
         self.build_structures();

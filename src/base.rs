@@ -1,5 +1,6 @@
 use crate::bot::{BotError, TerranBot};
 use rust_sc2::prelude::*;
+use UnitTypeId as UID;
 
 impl TerranBot {
     pub(crate) fn ideal_workers(&self) -> usize {
@@ -14,7 +15,7 @@ impl TerranBot {
     }
 
     pub(crate) fn train_workers(&mut self) {
-        if !self.can_afford(UnitTypeId::SCV, false) {
+        if !self.can_afford(UID::SCV, false) {
             return;
         }
 
@@ -42,12 +43,12 @@ impl TerranBot {
             .idle()
             .take(target_amount - current_amount)
         {
-            townhall.train(UnitTypeId::SCV, false);
+            townhall.train(UID::SCV, false);
             units_in_progress += 1;
         }
 
         for _ in 0..units_in_progress {
-            self.subtract_resources(UnitTypeId::SCV, true);
+            self.subtract_resources(UID::SCV, true);
         }
     }
 
@@ -60,22 +61,41 @@ impl TerranBot {
             .closest(location)
     }
 
-    pub(crate) fn build_expansion(&mut self) {
+    pub(crate) fn process_townhalls(&mut self) {
         // Always build expansion when we can afford it
-        if self.can_afford(UnitTypeId::CommandCenter, false)
-            && self.counter().ordered().count(UnitTypeId::CommandCenter) == 0
+        if self.can_afford(self.race_values.start_townhall, false)
+            && self
+                .counter()
+                .ordered()
+                .count(self.race_values.start_townhall)
+                == 0
+            && self.counter().all().count(self.race_values.start_townhall) < 6
         {
             // Find closest expansion site
             if let Some(expansion) = self.get_expansion() {
                 // Find worker closest to expansion site
                 if let Some(builder) = self.get_closest_free_worker(expansion.loc) {
-                    builder.build(UnitTypeId::CommandCenter, expansion.loc, false);
-                    self.subtract_resources(UnitTypeId::CommandCenter, false);
+                    builder.build(UID::CommandCenter, expansion.loc, false);
+                    self.subtract_resources(UID::CommandCenter, false);
                 }
             }
         }
 
-        // TODO: Upgrade command centers to orbital command
+        // Upgrade command centers to orbital commands
+        if self.can_afford(UID::OrbitalCommand, false)
+            && self.counter().ordered().count(UID::OrbitalCommand) == 0
+        {
+            if let Some(command_center) = self
+                .units
+                .my
+                .townhalls
+                .iter()
+                .of_type(UID::CommandCenter)
+                .closest(self.start_location)
+            {
+                command_center.use_ability(AbilityId::UpgradeToOrbitalOrbitalCommand, true);
+            }
+        }
     }
 
     pub(crate) fn build_supply(&mut self) {
@@ -89,7 +109,7 @@ impl TerranBot {
         }
     }
 
-    pub(crate) fn build_in_base(&mut self, building: UnitTypeId) -> Result<(), BotError> {
+    pub(crate) fn build_in_base(&mut self, building: UID) -> Result<(), BotError> {
         if !self.can_afford(building, false) {
             return Err(BotError::CannotAfford(building));
         }
@@ -107,7 +127,7 @@ impl TerranBot {
 
     pub(crate) fn build_close_to(
         &mut self,
-        building: UnitTypeId,
+        building: UID,
         location: Point2,
         placement_options: Option<PlacementOptions>,
     ) -> Result<(), BotError> {
@@ -135,7 +155,7 @@ impl TerranBot {
     }
 
     pub(crate) fn build_structures(&mut self) {
-        use UnitTypeId as UID;
+        use UID;
 
         if self.counter().all().count(UID::Barracks) == 0 {
             self.build_in_base(UID::Barracks).unwrap_or_default();
@@ -150,22 +170,40 @@ impl TerranBot {
             }
         }
 
-        // If we have built barracks, try to build refinery
-        if self.counter().all().count(UID::Barracks) != 0 {
-            for townhall in &self.units.my.townhalls {
-                if let Some(geyser) = self.find_gas_placement(townhall.position()) {
-                    if let Some(builder) = self.get_closest_free_worker(geyser.position()) {
-                        builder.build_gas(geyser.tag(), false);
+        // If we have begun constructing barracks, try to build refinery
+        match (
+            self.counter().all().count(UID::Barracks),
+            self.counter().count(UID::Factory),
+            self.counter().all().count(self.race_values.gas),
+        ) {
+            (1, _, 0) | (_, 1, 1) => {
+                for townhall in &self.units.my.townhalls {
+                    if let Some(geyser) = self.find_gas_placement(townhall.position()) {
+                        if let Some(builder) = self.get_closest_free_worker(geyser.position()) {
+                            builder.build_gas(geyser.tag(), false);
+                        }
                     }
                 }
             }
+            _ => {}
         }
 
         if self.counter().count(UID::Starport) > 0
             && self.minerals > 500
-            && self.counter().count(UID::Barracks) < 4
+            && self.counter().count(UID::Barracks) < 5
         {
             self.build_in_base(UID::Barracks).unwrap_or_default();
+        }
+
+        if let Some(barracks) = self
+            .units
+            .my
+            .structures
+            .of_type(UID::Barracks)
+            .closest(self.start_location)
+        {
+            barracks.train(UID::BarracksReactor, true);
+            self.subtract_resources(UID::BarracksReactor, false);
         }
     }
 

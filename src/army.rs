@@ -4,8 +4,8 @@ use rust_sc2::prelude::*;
 use UnitTypeId as UID;
 
 impl TerranBot {
-    const UNITS: &'static [UID] = &[UID::Marine, UID::Hellion, UID::Medivac];
-    const COMBAT_UNITS: &'static [UID] = &[UID::Marine, UID::Hellion];
+    const UNITS: &'static [UID] = &[UID::Marine, UID::Hellion, UID::Medivac, UID::Reaper];
+    const COMBAT_UNITS: &'static [UID] = &[UID::Marine, UID::Hellion, UID::Reaper];
     const SUPPORT_UNITS: &'static [UID] = &[UID::Medivac];
 
     pub(crate) fn train_army(&mut self) {
@@ -22,13 +22,24 @@ impl TerranBot {
         for building in &buildings {
             match building.type_id() {
                 UID::Barracks => {
-                    self.train_army_unit(building, UID::Marine);
+                    let unit = if self.counter().count(UID::Reaper) < 2
+                        && self.can_afford(UnitTypeId::Reaper, false)
+                    {
+                        UID::Reaper
+                    } else {
+                        UID::Marine
+                    };
+                    self.train_army_unit(building, unit);
                     if building.has_reactor() {
-                        self.train_army_unit(building, UID::Marine);
+                        self.train_army_unit(building, unit);
                     }
                 }
                 UID::Factory => self.train_army_unit(building, UID::Hellion),
-                UID::Starport => self.train_army_unit(building, UID::Medivac),
+                UID::Starport => {
+                    if self.counter().count(UID::Medivac) < 5 {
+                        self.train_army_unit(building, UID::Medivac)
+                    }
+                }
                 _ => unreachable!("No other buildings should have passed the iterator filter"),
             }
         }
@@ -122,7 +133,7 @@ impl TerranBot {
     fn move_active_army(&self) {
         for unit in self.units.my.units.iter().of_types(&Self::COMBAT_UNITS) {
             // Retreat units who are attacked and under 20% HP
-            if unit.is_attacked() && unit.health_percentage().is_some_and(|h| h < 0.2) {
+            if unit.is_attacked() && unit.health_percentage().is_some_and(|h| h < 0.6) {
                 if let Some(closest_enemy) = self.units.enemy.units.iter().closest(unit.position())
                 {
                     let retreat = unit.position() * 2.0 - closest_enemy.position();
@@ -130,13 +141,13 @@ impl TerranBot {
                 }
             }
             // Have retreated units close to a battle over 80% HP rejoin the fight
-            else if !unit.is_attacking() && unit.health_percentage().is_some_and(|h| h >= 0.8) {
+            else if !unit.is_attacking() && unit.health_percentage().is_some_and(|h| h >= 0.95) {
                 if let Some(close_enemy) = self
                     .units
                     .enemy
                     .units
                     .iter()
-                    .closer(12.0, unit.position())
+                    .closer(50.0, unit.position())
                     .closest(unit.position())
                 {
                     unit.attack(Target::Tag(close_enemy.tag()), false);
