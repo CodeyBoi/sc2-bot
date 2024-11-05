@@ -94,13 +94,22 @@ impl TerranBot {
             return Err(BotError::CannotAfford(building));
         }
         let main_base = self.start_location.towards(self.game_info.map_center, 8.0);
-        self.build_close_to(building, main_base)
+        self.build_close_to(
+            building,
+            main_base,
+            Some(PlacementOptions {
+                step: 4,
+                max_distance: 30,
+                ..Default::default()
+            }),
+        )
     }
 
     pub(crate) fn build_close_to(
         &mut self,
         building: UnitTypeId,
         location: Point2,
+        placement_options: Option<PlacementOptions>,
     ) -> Result<(), BotError> {
         if TECH_REQUIREMENTS
             .get(&building)
@@ -108,16 +117,12 @@ impl TerranBot {
         {
             return Err(BotError::UnfulfilledTechRequirement(building));
         }
+        let placement_options = placement_options.unwrap_or(PlacementOptions {
+            step: 4,
+            ..Default::default()
+        });
         let placement = self
-            .find_placement(
-                building,
-                location,
-                PlacementOptions {
-                    step: 4,
-                    max_distance: 25,
-                    ..Default::default()
-                },
-            )
+            .find_placement(building, location, placement_options)
             .ok_or(BotError::NoSuitableLocation(building, location))?;
 
         let builder = self

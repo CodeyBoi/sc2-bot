@@ -1,10 +1,14 @@
 use crate::bot::TerranBot;
 use rust_sc2::prelude::*;
 
-impl TerranBot {
-    pub(crate) fn train_army(&mut self) {
-        use UnitTypeId as UID;
+use UnitTypeId as UID;
 
+impl TerranBot {
+    const UNITS: &'static [UID] = &[UID::Marine, UID::Hellion, UID::Medivac];
+    const COMBAT_UNITS: &'static [UID] = &[UID::Marine, UID::Hellion];
+    const SUPPORT_UNITS: &'static [UID] = &[UID::Medivac];
+
+    pub(crate) fn train_army(&mut self) {
         // Loop through all our army buildings and build their units
         let buildings: Vec<_> = self
             .units
@@ -38,10 +42,14 @@ impl TerranBot {
     }
 
     pub(crate) fn move_army(&self) {
-        use UnitTypeId as UID;
+        self.move_idle_army();
+        self.move_active_army();
+    }
 
-        const UNITS: &[UID] = &[UID::Marine, UID::Hellion, UID::Medivac];
-        let army = self.units.my.units.iter().of_types(&UNITS).idle();
+    fn move_idle_army(&self) {
+        let idle_army = self.units.my.units.iter().of_types(&Self::UNITS).idle();
+        let combat_units = self.units.my.units.iter().of_types(&Self::COMBAT_UNITS);
+        let support_units = self.units.my.units.iter().of_types(&Self::SUPPORT_UNITS);
         let main_ramp: Point2 = self
             .ramps
             .my
@@ -60,11 +68,11 @@ impl TerranBot {
         {
             let targets = &self.units.enemy.all;
             if targets.is_empty() {
-                for m in army {
+                for m in idle_army {
                     m.attack(Target::Pos(self.enemy_start), false);
                 }
             } else {
-                for m in army {
+                for m in idle_army {
                     m.attack(
                         Target::Tag(
                             targets
@@ -79,22 +87,59 @@ impl TerranBot {
         } else {
             let targets = self.units.enemy.all.closer(30.0, self.start_location);
             if targets.is_empty() {
-                for m in army {
-                    if m.distance_squared(main_ramp) > 7.0_f32.powi(2) {
-                        m.move_to(Target::Pos(main_ramp), false);
+                for unit in idle_army {
+                    if unit.distance_squared(main_ramp) > 7.0_f32.powi(2) {
+                        unit.move_to(Target::Pos(main_ramp), false);
                     }
                 }
             } else {
-                for m in army {
-                    m.attack(
+                for unit in combat_units {
+                    unit.attack(
                         Target::Tag(
                             targets
-                                .closest(m)
+                                .closest(unit)
                                 .expect("We know `targets` isn't empty")
                                 .tag(),
                         ),
                         false,
                     );
+                }
+                for unit in support_units {
+                    if let Some(closest_combat_unit) = self
+                        .units
+                        .my
+                        .units
+                        .of_types(&Self::COMBAT_UNITS)
+                        .closest(unit.position())
+                    {
+                        unit.move_to(Target::Tag(closest_combat_unit.tag()), false);
+                    }
+                }
+            }
+        }
+    }
+
+    fn move_active_army(&self) {
+        for unit in self.units.my.units.iter().of_types(&Self::COMBAT_UNITS) {
+            // Retreat units who are attacked and under 20% HP
+            if unit.is_attacked() && unit.health_percentage().is_some_and(|h| h < 0.2) {
+                if let Some(closest_enemy) = self.units.enemy.units.iter().closest(unit.position())
+                {
+                    let retreat = unit.position() * 2.0 - closest_enemy.position();
+                    unit.move_to(Target::Pos(retreat), false);
+                }
+            }
+            // Have retreated units close to a battle over 80% HP rejoin the fight
+            else if !unit.is_attacking() && unit.health_percentage().is_some_and(|h| h >= 0.8) {
+                if let Some(close_enemy) = self
+                    .units
+                    .enemy
+                    .units
+                    .iter()
+                    .closer(12.0, unit.position())
+                    .closest(unit.position())
+                {
+                    unit.attack(Target::Tag(close_enemy.tag()), false);
                 }
             }
         }
