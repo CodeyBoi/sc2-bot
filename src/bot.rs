@@ -145,7 +145,8 @@ impl TerranBot {
             && self.counter().ordered().count(self.race_values.supply) == 0
             && self.can_afford(self.race_values.supply, false)
         {
-            self.build_in_base(self.race_values.supply).unwrap();
+            self.build_in_base(self.race_values.supply)
+                .unwrap_or_default();
         }
     }
 
@@ -265,7 +266,10 @@ impl TerranBot {
             }
         }
 
-        if self.counter().count(UID::Starport) > 0 && self.minerals > 500 {
+        if self.counter().count(UID::Starport) > 0
+            && self.minerals > 500
+            && self.counter().count(UID::Barracks) < 4
+        {
             self.build_in_base(UID::Barracks).unwrap_or_default();
         }
     }
@@ -384,6 +388,7 @@ impl TerranBot {
         // If we have more than 15 marines, attack. Otherwise, defend.
         if self.counter().count(UnitTypeId::Marine)
             >= self.counter().count(UnitTypeId::Barracks) * 15
+            || self.supply_used >= 175
         {
             let targets = &self.units.enemy.all;
             if targets.is_empty() {
