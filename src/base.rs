@@ -1,5 +1,5 @@
 use crate::bot::{BotError, TerranBot};
-use rust_sc2::prelude::*;
+use rust_sc2::{prelude::*, units::Container};
 use UnitTypeId as UID;
 
 impl TerranBot {
@@ -22,11 +22,9 @@ impl TerranBot {
         let target_amount = self.ideal_workers();
         let current_amount = self.units.my.workers.len()
             + self
-                .units
-                .my
-                .townhalls
+                .queued_units
                 .iter()
-                .filter(|t| t.is_active())
+                .filter(|&&u| u.0 == self.race_values.worker)
                 .count();
 
         if current_amount >= target_amount {
@@ -69,6 +67,7 @@ impl TerranBot {
                 .ordered()
                 .count(self.race_values.start_townhall)
                 == 0
+            && !self.queued_structures.contains(&UID::CommandCenter)
             && self.counter().all().count(self.race_values.start_townhall) < 6
         {
             // Find closest expansion site
@@ -77,6 +76,7 @@ impl TerranBot {
                 if let Some(builder) = self.get_closest_free_worker(expansion.loc) {
                     builder.build(UID::CommandCenter, expansion.loc, false);
                     self.subtract_resources(UID::CommandCenter, false);
+                    self.queued_structures.push(UID::CommandCenter);
                 }
             }
         }
@@ -151,6 +151,7 @@ impl TerranBot {
 
         builder.build(building, placement, false);
         self.subtract_resources(building, false);
+        self.queued_structures.push(building);
         Ok(())
     }
 

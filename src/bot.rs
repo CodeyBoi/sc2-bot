@@ -15,9 +15,14 @@ impl Player for WorkerRush {
     }
 }
 
+type Tag = u64;
+
 #[bot]
 #[derive(Default)]
-pub(crate) struct TerranBot;
+pub(crate) struct TerranBot {
+    pub(crate) queued_structures: Vec<UnitTypeId>,
+    pub(crate) queued_units: Vec<(UnitTypeId, Tag)>,
+}
 
 impl Player for TerranBot {
     fn get_player_settings(&self) -> PlayerSettings {
@@ -33,6 +38,7 @@ impl Player for TerranBot {
     }
 
     fn on_step(&mut self, _iteration: usize) -> SC2Result<()> {
+        self.reset_state();
         self.train_workers();
         self.process_townhalls();
         self.train_army();
@@ -105,4 +111,11 @@ pub(crate) enum BotError {
     CannotAfford(UnitTypeId),
     NoSuitableWorker,
     UnfulfilledTechRequirement(UnitTypeId),
+}
+
+impl TerranBot {
+    fn reset_state(&mut self) {
+        self.queued_structures = Vec::new();
+        self.queued_units = Vec::new();
+    }
 }

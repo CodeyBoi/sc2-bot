@@ -3,6 +3,8 @@ use rust_sc2::prelude::*;
 
 use UnitTypeId as UID;
 
+struct ArmyGeneral {}
+
 impl TerranBot {
     const UNITS: &'static [UID] = &[UID::Marine, UID::Hellion, UID::Medivac, UID::Reaper];
     const COMBAT_UNITS: &'static [UID] = &[UID::Marine, UID::Hellion, UID::Reaper];
@@ -53,9 +55,12 @@ impl TerranBot {
     }
 
     pub(crate) fn move_army(&self) {
+        self.scout_and_harass();
         self.move_idle_army();
         self.move_active_army();
     }
+
+    fn scout_and_harass(&self) {}
 
     fn move_idle_army(&self) {
         let idle_army = self.units.my.units.iter().of_types(&Self::UNITS).idle();
