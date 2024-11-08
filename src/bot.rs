@@ -72,8 +72,15 @@ impl Player for TerranBot {
                 }
             }
             Event::UnitCreated(tag) => {
-                if let Some(unit) = self.units.all.get(tag) {
+                if let Some(unit) = self.units.all.get(tag).cloned() {
                     let count = self.counter().all().count(unit.type_id());
+                    if let Some(idx) = self
+                        .queued_units
+                        .iter()
+                        .position(|&u| u.0 == unit.type_id())
+                    {
+                        self.queued_units.swap_remove(idx);
+                    }
                     print!("{}", time);
                     println!("{:?} created (current count: {})", unit.type_id(), count);
                 }
@@ -85,8 +92,15 @@ impl Player for TerranBot {
                 }
             }
             Event::ConstructionComplete(tag) => {
-                if let Some(unit) = self.units.all.get(tag) {
+                if let Some(unit) = self.units.all.get(tag).cloned() {
                     let count = self.counter().all().count(unit.type_id());
+                    if let Some(idx) = self
+                        .queued_structures
+                        .iter()
+                        .position(|&s| s == unit.type_id())
+                    {
+                        self.queued_structures.swap_remove(idx);
+                    }
                     print!("{}", time);
                     println!(
                         "Construction of {:?} finished! (current count: {})",

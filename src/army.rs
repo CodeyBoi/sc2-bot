@@ -3,11 +3,15 @@ use rust_sc2::prelude::*;
 
 use UnitTypeId as UID;
 
-struct ArmyGeneral {}
-
 impl TerranBot {
-    const UNITS: &'static [UID] = &[UID::Marine, UID::Hellion, UID::Medivac, UID::Reaper];
-    const COMBAT_UNITS: &'static [UID] = &[UID::Marine, UID::Hellion, UID::Reaper];
+    const UNITS: &'static [UID] = &[
+        UID::Marine,
+        UID::Hellion,
+        UID::Medivac,
+        UID::Reaper,
+        UID::Cyclone,
+    ];
+    const COMBAT_UNITS: &'static [UID] = &[UID::Marine, UID::Hellion, UID::Reaper, UID::Cyclone];
     const SUPPORT_UNITS: &'static [UID] = &[UID::Medivac];
 
     pub(crate) fn train_army(&mut self) {
@@ -25,6 +29,7 @@ impl TerranBot {
             match building.type_id() {
                 UID::Barracks => {
                     let unit = if self.counter().count(UID::Reaper) < 2
+                        && self.time < 180.0
                         && self.can_afford(UnitTypeId::Reaper, false)
                     {
                         UID::Reaper
@@ -34,11 +39,15 @@ impl TerranBot {
                     self.train_army_unit(building, unit);
                     if building.has_reactor() {
                         self.train_army_unit(building, unit);
+                        self.train_army_unit(building, unit);
+                        self.train_army_unit(building, UID::Marauder);
                     }
                 }
-                UID::Factory => self.train_army_unit(building, UID::Hellion),
+                UID::Factory => {
+                    self.train_army_unit(building, UID::Cyclone);
+                }
                 UID::Starport => {
-                    if self.counter().count(UID::Medivac) < 5 {
+                    if self.counter().count(UID::Medivac) < 3 {
                         self.train_army_unit(building, UID::Medivac)
                     }
                 }
@@ -51,6 +60,7 @@ impl TerranBot {
         if self.can_afford(unit, true) {
             building.train(unit, true);
             self.subtract_resources(unit, true);
+            self.queued_units.push((unit, building.tag()))
         }
     }
 
