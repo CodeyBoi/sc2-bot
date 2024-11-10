@@ -19,10 +19,7 @@ type Tag = u64;
 
 #[bot]
 #[derive(Default)]
-pub(crate) struct TerranBot {
-    pub(crate) queued_structures: Vec<UnitTypeId>,
-    pub(crate) queued_units: Vec<(UnitTypeId, Tag)>,
-}
+pub(crate) struct TerranBot;
 
 impl Player for TerranBot {
     fn get_player_settings(&self) -> PlayerSettings {
@@ -33,19 +30,22 @@ impl Player for TerranBot {
     }
 
     fn on_start(&mut self) -> SC2Result<()> {
-        self.set_game_step(4);
+        for worker in &self.units.my.workers {
+            worker.stop(false);
+        }
+        for townhall in &self.units.my.townhalls {
+            townhall.command(
+                AbilityId::RallyCommandCenter,
+                Target::Tag(townhall.tag()),
+                false,
+            );
+        }
         Ok(())
     }
 
-    fn on_step(&mut self, _iteration: usize) -> SC2Result<()> {
-        self.reset_state();
-        self.train_workers();
-        self.process_townhalls();
-        self.train_army();
-        self.build_supply();
-        self.build_structures();
-        self.move_workers();
-        self.move_army();
+    fn on_step(&mut self, iteration: usize) -> SC2Result<()> {
+        self.process_base(iteration);
+        self.process_army(iteration);
         Ok(())
     }
 
@@ -64,8 +64,8 @@ impl Player for TerranBot {
                 if let Some(unit) = self.units.all.get(tag) {
                     print!("{}", time);
                     if alliance.is_mine() {
-                        let count = self.counter().all().count(unit.type_id());
-                        println!("{:?} destroyed! (current count: {})", unit.type_id(), count);
+                        let count = self.counter().alias().all().count(unit.type_id());
+                        println!("{:?} destroyed! (count: {})", unit.type_id(), count);
                     } else if alliance.is_enemy() {
                         println!("Enemy {:?} destroyed!", unit.type_id());
                     }
@@ -73,40 +73,24 @@ impl Player for TerranBot {
             }
             Event::UnitCreated(tag) => {
                 if let Some(unit) = self.units.all.get(tag).cloned() {
-                    let count = self.counter().all().count(unit.type_id());
-                    if let Some(idx) = self
-                        .queued_units
-                        .iter()
-                        .position(|&u| u.0 == unit.type_id())
-                    {
-                        self.queued_units.swap_remove(idx);
+                    if unit.type_id() != self.race_values.worker {
+                        let count = self.counter().alias().all().count(unit.type_id());
+                        print!("{}", time);
+                        println!("{:?} created (count: {})", unit.type_id(), count);
                     }
-                    print!("{}", time);
-                    println!("{:?} created (current count: {})", unit.type_id(), count);
                 }
             }
             Event::ConstructionStarted(tag) => {
                 if let Some(unit) = self.units.all.get(tag) {
                     print!("{}", time);
-                    println!("Construction of {:?} started", unit.type_id());
+                    println!("{:?}: construction started", unit.type_id());
                 }
             }
             Event::ConstructionComplete(tag) => {
                 if let Some(unit) = self.units.all.get(tag).cloned() {
-                    let count = self.counter().all().count(unit.type_id());
-                    if let Some(idx) = self
-                        .queued_structures
-                        .iter()
-                        .position(|&s| s == unit.type_id())
-                    {
-                        self.queued_structures.swap_remove(idx);
-                    }
+                    let count = self.counter().alias().all().count(unit.type_id());
                     print!("{}", time);
-                    println!(
-                        "Construction of {:?} finished! (current count: {})",
-                        unit.type_id(),
-                        count
-                    );
+                    println!("{:?} finished! (count: {})", unit.type_id(), count,);
                 }
             }
             Event::RandomRaceDetected(race) => {
@@ -125,11 +109,4 @@ pub(crate) enum BotError {
     CannotAfford(UnitTypeId),
     NoSuitableWorker,
     UnfulfilledTechRequirement(UnitTypeId),
-}
-
-impl TerranBot {
-    fn reset_state(&mut self) {
-        self.queued_structures = Vec::new();
-        self.queued_units = Vec::new();
-    }
 }
