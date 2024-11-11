@@ -31,9 +31,7 @@ impl TerranBot {
             .structures
             .iter()
             .of_types(&vec![UID::Barracks, UID::Factory, UID::Starport])
-            .filter(|b| {
-                b.is_ready() && (!b.is_active() || (b.orders().len() < 2 && b.has_reactor()))
-            })
+            .almost_unused()
             .cloned()
             .collect();
         for building in &buildings {

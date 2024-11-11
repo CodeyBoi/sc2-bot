@@ -19,7 +19,9 @@ type Tag = u64;
 
 #[bot]
 #[derive(Default)]
-pub(crate) struct TerranBot;
+pub(crate) struct TerranBot {
+    pub(crate) build_order_index: usize,
+}
 
 impl Player for TerranBot {
     fn get_player_settings(&self) -> PlayerSettings {
@@ -104,9 +106,11 @@ impl Player for TerranBot {
 }
 
 #[derive(Debug)]
-pub(crate) enum BotError {
+pub(crate) enum BuildError {
     NoSuitableLocation(UnitTypeId, Point2),
     CannotAfford(UnitTypeId),
     NoSuitableWorker,
     UnfulfilledTechRequirement(UnitTypeId),
+    EndOfBuildOrder,
+    NoProducer(UnitTypeId),
 }

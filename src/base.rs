@@ -1,13 +1,25 @@
-use crate::bot::{BotError, TerranBot};
+use crate::bot::{BuildError, TerranBot};
 use rust_sc2::prelude::*;
 use UnitTypeId as UID;
 
 const BUILD_ORDER: &[UID] = &[
+    UID::SupplyDepot,
     UID::Barracks,
     UID::Refinery,
-    UID::Reaper,
     UID::OrbitalCommand,
+    UID::Reaper,
     UID::CommandCenter,
+    UID::SupplyDepot,
+    UID::Marine,
+    UID::Factory,
+    UID::BarracksReactor,
+    UID::CommandCenter,
+    UID::OrbitalCommand,
+    UID::Starport,
+    UID::Refinery,
+    UID::Hellion,
+    UID::Hellion,
+    UID::BarracksTechLab,
 ];
 
 impl TerranBot {
@@ -18,60 +30,124 @@ impl TerranBot {
         self.process_townhalls();
         self.build_supply();
         if iteration % 5 == 1 {
-            self.build_structures();
+            self.build_next_in_build_order();
         }
         self.move_workers();
     }
-    fn build_close_to(
-        &mut self,
-        building: UID,
-        location: Point2,
-        placement_options: Option<PlacementOptions>,
-    ) -> Result<(), BotError> {
-        if TECH_REQUIREMENTS
-            .get(&building)
-            .is_some_and(|&r| self.counter().tech().count(r) == 0)
+
+    fn build_next_in_build_order(&mut self) -> Result<(), BuildError> {
+        let next = *BUILD_ORDER
+            .get(self.build_order_index)
+            .ok_or(BuildError::EndOfBuildOrder)?;
+        if !self.can_afford(next, next.is_unit()) {
+            return Err(BuildError::CannotAfford(next));
+        } else if TECH_REQUIREMENTS
+            .get(&next)
+            .is_some_and(|&requirement| self.counter().tech().count(requirement) == 0)
         {
-            return Err(BotError::UnfulfilledTechRequirement(building));
+            return Err(BuildError::UnfulfilledTechRequirement(next));
         }
-        let placement_options = placement_options.unwrap_or(PlacementOptions {
-            step: 4,
-            ..Default::default()
-        });
-        let placement = self
-            .find_placement(building, location, placement_options)
-            .ok_or(BotError::NoSuitableLocation(building, location))?;
 
-        let builder = self
-            .get_closest_free_worker(placement)
-            .ok_or(BotError::NoSuitableWorker)?;
+        match next {
+            UID::CommandCenter => self.build_expansion()?,
+            UID::OrbitalCommand => self.upgrade_townhall()?,
+            gas_building if next == self.race_values.gas => self.build_gas_building()?,
+            unit if next.is_unit() => self.train_unit(unit)?,
+            structure if next.is_structure() => self.build_structure(structure)?,
+        }
 
-        builder.build(building, placement, false);
-        self.subtract_resources(building, false);
+        self.subtract_resources(next, next.is_unit());
+        self.build_order_index += 1;
         Ok(())
     }
 
-    pub(crate) fn build_in_base(&mut self, building: UID) -> Result<(), BotError> {
-        if !self.can_afford(building, false) {
-            return Err(BotError::CannotAfford(building));
-        }
-        let main_base = self.start_location.towards(self.game_info.map_center, 8.0);
-        self.build_close_to(
-            building,
-            main_base,
-            Some(PlacementOptions {
-                step: if building == self.race_values.supply {
-                    2
-                } else {
-                    5
-                },
-                max_distance: 30,
-                ..Default::default()
-            }),
-        )
+    fn build_expansion(&self) -> Result<(), BuildError> {
+        // Find closest expansion site
+        let expansion = self.get_expansion().ok_or(BuildError::NoSuitableLocation(
+            self.race_values.start_townhall,
+            self.start_location,
+        ))?;
+        // Find worker closest to expansion site
+        let builder = self
+            .get_closest_free_worker(expansion.loc)
+            .ok_or(BuildError::NoSuitableWorker)?;
+        builder.build(self.race_values.start_townhall, expansion.loc, false);
+        Ok(())
     }
 
-    pub(crate) fn build_structures(&mut self) {
+    fn upgrade_townhall(&self) -> Result<(), BuildError> {
+        let command_center = self
+            .units
+            .my
+            .townhalls
+            .iter()
+            .of_type(UID::CommandCenter)
+            .closest(self.start_location)
+            .ok_or(BuildError::NoSuitableWorker)?;
+        command_center.use_ability(AbilityId::UpgradeToOrbitalOrbitalCommand, false);
+        Ok(())
+    }
+
+    fn build_gas_building(&self) -> Result<(), BuildError> {
+        let geyser = self
+            .units
+            .my
+            .townhalls
+            .iter()
+            .find_map(|t| self.find_gas_placement(t.position()))
+            .ok_or(BuildError::NoSuitableLocation(
+                self.race_values.gas,
+                self.start_location,
+            ))?;
+
+        let builder = self
+            .get_closest_free_worker(geyser.position())
+            .ok_or(BuildError::NoSuitableWorker)?;
+
+        builder.build_gas(geyser.tag(), false);
+        Ok(())
+    }
+
+    fn train_unit(&self, unit: UnitTypeId) -> Result<(), BuildError> {
+        let producer = *PRODUCERS.get(&unit).ok_or(BuildError::NoProducer(unit))?;
+        let producer = self
+            .units
+            .my
+            .structures
+            .iter()
+            .of_type(producer)
+            .almost_unused()
+            .closest(self.start_location)
+            .ok_or(BuildError::NoProducer(unit))?;
+        producer.train(unit, true);
+        Ok(())
+    }
+
+    fn build_structure(&self, structure: UnitTypeId) -> Result<(), BuildError> {
+        let main_base = self.start_location.towards(self.game_info.map_center, 10.0);
+        let placement_options = PlacementOptions {
+            step: if structure == self.race_values.supply {
+                3
+            } else {
+                5
+            },
+            max_distance: 30,
+            ..Default::default()
+        };
+        let placement = self
+            .find_placement(structure, main_base, placement_options)
+            .ok_or(BuildError::NoSuitableLocation(structure, main_base))?;
+
+        let builder = self
+            .get_closest_free_worker(placement)
+            .ok_or(BuildError::NoSuitableWorker)?;
+
+        builder.build(structure, placement, false);
+
+        Ok(())
+    }
+
+    pub(crate) fn build_structures_old(&mut self) {
         if self.counter().all().count(UID::Barracks) == 0 {
             self.build_in_base(UID::Barracks).unwrap_or_default();
         }
@@ -362,71 +438,6 @@ impl TerranBot {
         }
     }
 
-    fn process_townhalls(&mut self) {
-        // Always build expansion when we can afford it
-        if self.can_afford(self.race_values.start_townhall, false)
-            && self
-                .counter()
-                .ordered()
-                .count(self.race_values.start_townhall)
-                == 0
-            && self.counter().all().count(self.race_values.start_townhall) < 6
-        {
-            // Find closest expansion site
-            if let Some(expansion) = self.get_expansion() {
-                // Find worker closest to expansion site
-                if let Some(builder) = self.get_closest_free_worker(expansion.loc) {
-                    builder.build(UID::CommandCenter, expansion.loc, false);
-                    self.subtract_resources(UID::CommandCenter, false);
-                }
-            }
-        }
-
-        // Upgrade command centers to orbital commands
-        if self.can_afford(UID::OrbitalCommand, false)
-            && self.counter().ordered().count(UID::OrbitalCommand) == 0
-        {
-            if let Some(command_center) = self
-                .units
-                .my
-                .townhalls
-                .iter()
-                .of_type(UID::CommandCenter)
-                .closest(self.start_location)
-            {
-                command_center.use_ability(AbilityId::UpgradeToOrbitalOrbitalCommand, true);
-            }
-        }
-
-        // Call down MULEs
-        for orbital in self
-            .units
-            .my
-            .townhalls
-            .iter()
-            .filter(|t| t.type_id() == UID::OrbitalCommand)
-        {
-            if orbital.has_ability(AbilityId::CalldownMULECalldownMULE) {
-                if let Some(townhall) = self
-                    .units
-                    .my
-                    .townhalls
-                    .iter()
-                    .filter(|t| t.assigned_harvesters() < t.ideal_harvesters())
-                    .closest(orbital.position())
-                {
-                    if let Some(mineral) = self.units.mineral_fields.closest(townhall.position()) {
-                        orbital.command(
-                            AbilityId::CalldownMULECalldownMULE,
-                            Target::Tag(mineral.tag()),
-                            false,
-                        );
-                    }
-                }
-            }
-        }
-    }
-
     fn train_workers(&mut self) {
         if !self.can_afford(self.race_values.worker, false) {
             return;
@@ -452,7 +463,7 @@ impl TerranBot {
             .my
             .townhalls
             .iter()
-            .idle()
+            .almost_idle()
             .filter(|t| t.is_ready())
             .take(target_amount - current_amount)
             .cloned()
@@ -465,6 +476,28 @@ impl TerranBot {
             }
             townhall.train(worker, false);
             self.subtract_resources(worker, true);
+        }
+
+        // Call down MULEs
+        for orbital in self.units.my.townhalls.iter().of_type(UID::OrbitalCommand) {
+            if orbital.has_ability(AbilityId::CalldownMULECalldownMULE) {
+                if let Some(townhall) = self
+                    .units
+                    .my
+                    .townhalls
+                    .iter()
+                    .filter(|t| t.assigned_harvesters() < t.ideal_harvesters())
+                    .closest(orbital.position())
+                {
+                    if let Some(mineral) = self.units.mineral_fields.closest(townhall.position()) {
+                        orbital.command(
+                            AbilityId::CalldownMULECalldownMULE,
+                            Target::Tag(mineral.tag()),
+                            false,
+                        );
+                    }
+                }
+            }
         }
     }
 }
