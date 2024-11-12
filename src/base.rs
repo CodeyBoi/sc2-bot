@@ -343,48 +343,17 @@ impl TerranBot {
     }
 
     fn move_workers(&self) {
-        // For each resource gather point with too many workers, make unnecessary workers idle
-        for townhall in self
+        // To keep track of idle workers
+        let mut idle_workers: Vec<_> = self
             .units
             .my
-            .townhalls
+            .workers
             .iter()
-            .filter(|t| t.assigned_harvesters() > t.ideal_harvesters())
-        {
-            if let Some(worker) = self
-                .units
-                .my
-                .workers
-                .iter()
-                .filter(|w| {
-                    w.target_tag()
-                        .is_some_and(|tag| self.units.mineral_fields.get(tag).is_some())
-                })
-                .closest(townhall)
-            {
-                worker.stop(false);
-            }
-        }
+            .idle()
+            .map(|w| w.tag())
+            .collect();
 
-        for gas_building in self
-            .units
-            .my
-            .gas_buildings
-            .iter()
-            .filter(|g| g.assigned_harvesters() > g.ideal_harvesters())
-        {
-            if let Some(worker) = self
-                .units
-                .my
-                .workers
-                .iter()
-                .filter(|w| w.target_tag().is_some_and(|tag| tag == gas_building.tag()))
-                .closest(gas_building.position())
-            {
-                worker.stop(false);
-            }
-        }
-
+        // Fill all gas buildings with workers
         for gas_building in self
             .units
             .my
@@ -408,32 +377,89 @@ impl TerranBot {
                 worker
             } else {
                 // Getting None here means we have no workers (we are Boned)
-                return;
+                continue;
             };
             worker.gather(gas_building.tag(), false);
+            if let Some(idx) = idle_workers.iter().position(|&t| t == worker.tag()) {
+                idle_workers.swap_remove(idx);
+            }
         }
 
-        let mut workers = self.units.my.workers.iter().idle();
-
-        // For each townhall with too few workers, joink an idle worker
+        // For each resource gather point with too many workers, make unnecessary workers idle
         for townhall in self
             .units
             .my
             .townhalls
             .iter()
-            .filter(|t| t.assigned_harvesters() < t.ideal_harvesters())
+            .filter(|t| t.assigned_harvesters() > t.ideal_harvesters())
         {
-            if let Some(worker) = workers.next() {
-                let resource = self
+            if let Some(worker) = self
+                .units
+                .my
+                .workers
+                .iter()
+                .filter(|w| {
+                    w.target_tag()
+                        .is_some_and(|tag| self.units.mineral_fields.get(tag).is_some())
+                })
+                .closest(townhall)
+            {
+                worker.stop(false);
+                idle_workers.push(worker.tag());
+            }
+        }
+        for gas_building in self
+            .units
+            .my
+            .gas_buildings
+            .iter()
+            .filter(|g| g.assigned_harvesters() > g.ideal_harvesters())
+        {
+            if let Some(worker) = self
+                .units
+                .my
+                .workers
+                .iter()
+                .filter(|w| w.target_tag().is_some_and(|tag| tag == gas_building.tag()))
+                .closest(gas_building.position())
+            {
+                worker.stop(false);
+                idle_workers.push(worker.tag());
+            }
+        }
+
+        // Let each townhall with too few workers yoink some idle ones
+        for townhall in &self.units.my.townhalls {
+            let wanted_amount = if let (Some(ideal), Some(assigned)) =
+                (townhall.ideal_harvesters(), townhall.assigned_harvesters())
+            {
+                ideal - assigned
+            } else {
+                eprintln!("Error: tried to get assigned_harvesters from non-townhall unit");
+                continue;
+            };
+            for _ in 0..wanted_amount {
+                if let Some(worker) = self
+                    .units
+                    .my
+                    .workers
+                    .find_tags(&idle_workers)
+                    .closest(townhall)
+                {
+                    let resource = self
                     .units
                     .mineral_fields
                     .iter()
-                    .closer(10.0, townhall)
+                    .closer(6.0, townhall)
                     .closest(worker)
                     .expect(
                         "If ideal_harvesters > 0 then townhall should have nearby mineral resource",
                     );
-                worker.gather(resource.tag(), false);
+                    worker.gather(resource.tag(), false);
+                    if let Some(idx) = idle_workers.iter().position(|&t| t == worker.tag()) {
+                        idle_workers.swap_remove(idx);
+                    }
+                }
             }
         }
     }
@@ -453,6 +479,7 @@ impl TerranBot {
                 .filter(|t| t.is_active())
                 .count();
 
+        // Check if we have enough workers already
         if current_amount >= target_amount {
             return;
         }
