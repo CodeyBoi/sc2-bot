@@ -6,8 +6,8 @@ const BUILD_ORDER: &[UID] = &[
     UID::SupplyDepot,
     UID::Barracks,
     UID::Refinery,
-    UID::OrbitalCommand,
     UID::BarracksReactor,
+    UID::OrbitalCommand,
     UID::CommandCenter,
     UID::SupplyDepot,
     UID::Marine,
@@ -26,7 +26,11 @@ const BUILD_ORDER: &[UID] = &[
     UID::Refinery,
     UID::FactoryReactor,
     UID::Starport,
+    UID::BarracksReactor,
+    UID::BarracksReactor,
+    UID::Factory,
     UID::FactoryTechLab,
+    UID::Armory,
 ];
 
 const UPGRADE_ORDER: &[UpgradeId] = &[
@@ -43,20 +47,20 @@ const UPGRADE_ORDER: &[UpgradeId] = &[
 impl TerranBot {
     pub(crate) fn process_base(&mut self, iteration: usize) {
         if iteration % 5 == 0 {
-            self.train_workers();
-        }
-        if iteration % 5 == 1 {
             self.build_next_in_build_order().unwrap_or_default();
             self.research_next_in_upgrade_order().unwrap_or_default();
             self.process_supply();
             self.process_structure_abilities();
         }
+        if iteration % 5 == 1 {
+            self.train_workers();
+        }
         self.move_workers();
     }
 
     fn build_next_in_build_order(&mut self) -> Result<(), BuildError> {
-        let next = *BUILD_ORDER
-            .get(self.build_order_index)
+        let next = self
+            .get_current_build_prio()
             .ok_or(BuildError::EndOfBuildOrder)?;
         if !self.can_afford(next, next.is_unit()) {
             return Err(BuildError::CannotAfford(next));
@@ -72,8 +76,8 @@ impl TerranBot {
             UID::OrbitalCommand => self.upgrade_townhall()?,
             _ if next == self.race_values.gas => self.build_gas_building()?,
             unit if next.is_unit() => self.train_unit(unit)?,
-            structure if next.is_structure() => self.build_structure(structure)?,
             addon if next.is_addon() => self.build_addon(addon)?,
+            structure if next.is_structure() => self.build_structure(structure)?,
             _ => {}
         }
 
@@ -110,8 +114,9 @@ impl TerranBot {
             .townhalls
             .iter()
             .of_type(UID::CommandCenter)
+            .idle()
             .closest(self.start_location)
-            .ok_or(BuildError::NoSuitableWorker)?;
+            .ok_or(BuildError::NoProducer(UID::OrbitalCommand))?;
         command_center.use_ability(AbilityId::UpgradeToOrbitalOrbitalCommand, false);
         Ok(())
     }
@@ -152,13 +157,18 @@ impl TerranBot {
     }
 
     fn build_structure(&self, structure: UID) -> Result<(), BuildError> {
-        let main_base = self.start_location.towards(self.game_info.map_center, 10.0);
+        let main_base = if structure == self.race_values.supply {
+            self.start_location.towards(self.game_info.map_center, 2.0)
+        } else {
+            self.start_location.towards(self.game_info.map_center, 10.0)
+        };
         let placement_options = PlacementOptions {
             step: if structure == self.race_values.supply {
                 3
             } else {
-                5
+                4
             },
+            addon: matches!(structure, UID::Barracks | UID::Factory | UID::Starport),
             max_distance: 30,
             ..Default::default()
         };
@@ -175,32 +185,37 @@ impl TerranBot {
         Ok(())
     }
 
-    fn build_addon(&self, addon: UID) -> Result<(), BuildError> {
+    fn build_addon(&mut self, addon: UID) -> Result<(), BuildError> {
         let producer = match addon {
             UID::BarracksReactor | UID::BarracksTechLab => UID::Barracks,
             UID::FactoryReactor | UID::FactoryTechLab => UID::Factory,
             UID::StarportReactor | UID::StarportTechLab => UID::Starport,
             _ => return Err(BuildError::InvalidArgument(addon)),
         };
-        if let Some(producer) = self
+        let producer = self
             .units
             .my
             .structures
             .iter()
             .of_type(producer)
             .idle()
+            .ready()
+            .filter(|p| !p.has_addon())
             .closest(self.start_location)
-        {
-            producer.train(addon, false);
-        }
+            .ok_or(BuildError::NoProducer(addon))?;
+
+        producer.stop(false);
+        producer.train(addon, false);
+
         Ok(())
     }
 
     fn process_supply(&mut self) {
         // Build supply if none is being built and we have less than 5 left
         let structure = self.race_values.supply;
-        if self.supply_left < 5
-            && self.counter().ordered().count(structure) == 0
+        let ordered = self.counter().ordered().count(structure);
+        if ((self.supply_left < 5 && ordered == 0)
+            || (self.supply_left < 2 && ordered == 1 && self.time > 180.0))
             && self.can_afford(structure, false)
         {
             self.build_structure(structure).unwrap_or_default();
@@ -262,6 +277,15 @@ impl TerranBot {
             .ok_or(BuildError::EndOfBuildOrder)?;
         if !self.can_afford_upgrade(upgrade) {
             return Err(BuildError::CannotAffordUpgrade(upgrade));
+        } else if matches!(
+            upgrade,
+            UpgradeId::TerranInfantryWeaponsLevel2
+                | UpgradeId::TerranInfantryArmorsLevel2
+                | UpgradeId::TerranInfantryWeaponsLevel3
+                | UpgradeId::TerranInfantryArmorsLevel3
+        ) && self.counter().count(UID::Armory) == 0
+        {
+            return Err(BuildError::UnfulfilledTechRequirement(UID::Armory));
         }
 
         let producer = *RESEARCHERS
@@ -274,6 +298,7 @@ impl TerranBot {
             .iter()
             .of_type(producer)
             .idle()
+            .ready()
             .closest(self.start_location)
             .ok_or(BuildError::NoResearcher(upgrade))?;
         producer.research(upgrade, false);
@@ -287,6 +312,10 @@ impl TerranBot {
         );
         self.log(&format!("{}{:?}: research started", time, upgrade));
         Ok(())
+    }
+
+    pub(crate) fn get_current_build_prio(&self) -> Option<UID> {
+        BUILD_ORDER.get(self.build_order_index).copied()
     }
 
     // pub(crate) fn build_structures_old(&mut self) {
@@ -435,10 +464,9 @@ impl TerranBot {
             .my
             .workers
             .iter()
-            .filter(|w| !w.is_constructing() && !w.is_carrying_resource())
+            .filter(|w| w.is_collecting() && !w.is_constructing() && !w.is_carrying_resource())
             .closest(location)
     }
-
     fn ideal_workers(&self) -> usize {
         80.min(
             self.counter()
@@ -573,6 +601,24 @@ impl TerranBot {
     }
 
     fn train_workers(&mut self) {
+        if !self.can_afford(self.race_values.worker, false)
+            || (self
+                .get_current_build_prio()
+                .is_some_and(|b| b == UID::OrbitalCommand)
+                && self
+                    .units
+                    .my
+                    .structures
+                    .iter()
+                    .of_type(UID::Barracks)
+                    .closest(self.start_location)
+                    .is_some_and(|b| {
+                        !b.is_ready() && (1.0 - b.build_progress()) * b.build_time() < 12.0
+                    }))
+        {
+            return;
+        }
+
         let target_amount = self.ideal_workers();
         let current_amount = self.units.my.workers.len()
             + self

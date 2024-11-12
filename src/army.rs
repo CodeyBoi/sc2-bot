@@ -16,7 +16,7 @@ const SUPPORT_UNITS: &[UID] = &[UID::Medivac];
 impl TerranBot {
     pub(crate) fn process_army(&mut self, iteration: usize) {
         if iteration % 5 == 0 {
-            // self.train_army();
+            self.train_army();
         }
         self.scout_and_harass();
         self.move_idle_army();
@@ -37,6 +37,11 @@ impl TerranBot {
         for building in &buildings {
             match building.type_id() {
                 UID::Barracks => {
+                    if self.get_current_build_prio().is_some_and(|p| {
+                        matches!(p, UID::BarracksReactor | UnitTypeId::BarracksTechLab)
+                    }) {
+                        continue;
+                    }
                     let unit = if self.counter().count(UID::Reaper) < 1
                         && self.time < 180.0
                         && self.can_afford(UnitTypeId::Reaper, false)
@@ -46,9 +51,6 @@ impl TerranBot {
                         UID::Marine
                     };
                     self.train_army_unit(building, unit);
-                    if building.has_reactor() {
-                        self.train_army_unit(building, unit);
-                    }
                 }
                 UID::Factory => {
                     self.train_army_unit(building, UID::Cyclone);
@@ -82,14 +84,14 @@ impl TerranBot {
             .enemy
             .units
             .iter()
-            .closer(unit.sight_range() * 1.2, unit)
+            .closer(unit.sight_range() * 1.8, unit)
             .closest(unit)
         {
-            if unit.is_attacking() || !unit.on_cooldown() {
+            if !unit.on_cooldown() {
                 unit.attack(Target::Tag(enemy.tag()), false);
             } else {
                 let retreat = unit.position() * 2.0 - enemy.position();
-                unit.move_to(Target::Pos(retreat), false);
+                unit.attack(Target::Pos(retreat), false);
             }
         }
         // No enemy in range, move towards closest enemy structure
