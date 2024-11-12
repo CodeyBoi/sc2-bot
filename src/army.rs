@@ -16,7 +16,7 @@ const SUPPORT_UNITS: &[UID] = &[UID::Medivac];
 impl TerranBot {
     pub(crate) fn process_army(&mut self, iteration: usize) {
         if iteration % 5 == 0 {
-            self.train_army();
+            // self.train_army();
         }
         self.scout_and_harass();
         self.move_idle_army();

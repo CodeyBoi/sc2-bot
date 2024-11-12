@@ -29,7 +29,16 @@ const BUILD_ORDER: &[UID] = &[
     UID::FactoryTechLab,
 ];
 
-const UPGRADE_ORDER: &[UpgradeId] = &[];
+const UPGRADE_ORDER: &[UpgradeId] = &[
+    UpgradeId::ShieldWall,
+    UpgradeId::Stimpack,
+    UpgradeId::TerranInfantryWeaponsLevel1,
+    UpgradeId::TerranInfantryArmorsLevel1,
+    UpgradeId::TerranInfantryWeaponsLevel2,
+    UpgradeId::TerranInfantryArmorsLevel2,
+    UpgradeId::TerranInfantryWeaponsLevel3,
+    UpgradeId::TerranInfantryArmorsLevel3,
+];
 
 impl TerranBot {
     pub(crate) fn process_base(&mut self, iteration: usize) {
@@ -38,9 +47,9 @@ impl TerranBot {
         }
         if iteration % 5 == 1 {
             self.build_next_in_build_order().unwrap_or_default();
+            self.research_next_in_upgrade_order().unwrap_or_default();
             self.process_supply();
             self.process_structure_abilities();
-            self.process_research();
         }
         self.move_workers();
     }
@@ -67,6 +76,13 @@ impl TerranBot {
             addon if next.is_addon() => self.build_addon(addon)?,
             _ => {}
         }
+
+        let time = format!(
+            "{:0>2}:{:0>2} ",
+            self.time as usize / 60,
+            self.time as usize % 60
+        );
+        self.log(&format!("{}{:?}: construction started", time, next));
 
         self.subtract_resources(next, next.is_unit());
         self.build_order_index += 1;
@@ -240,7 +256,38 @@ impl TerranBot {
         }
     }
 
-    fn process_research(&self) {}
+    fn research_next_in_upgrade_order(&mut self) -> Result<(), BuildError> {
+        let upgrade = *UPGRADE_ORDER
+            .get(self.upgrade_order_index)
+            .ok_or(BuildError::EndOfBuildOrder)?;
+        if !self.can_afford_upgrade(upgrade) {
+            return Err(BuildError::CannotAffordUpgrade(upgrade));
+        }
+
+        let producer = *RESEARCHERS
+            .get(&upgrade)
+            .ok_or(BuildError::NoResearcher(upgrade))?;
+        let producer = self
+            .units
+            .my
+            .structures
+            .iter()
+            .of_type(producer)
+            .idle()
+            .closest(self.start_location)
+            .ok_or(BuildError::NoResearcher(upgrade))?;
+        producer.research(upgrade, false);
+        self.subtract_upgrade_cost(upgrade);
+        self.upgrade_order_index += 1;
+
+        let time = format!(
+            "{:0>2}:{:0>2} ",
+            self.time as usize / 60,
+            self.time as usize % 60
+        );
+        self.log(&format!("{}{:?}: research started", time, upgrade));
+        Ok(())
+    }
 
     // pub(crate) fn build_structures_old(&mut self) {
     //     if self.counter().all().count(UID::Barracks) == 0 {

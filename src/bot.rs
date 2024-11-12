@@ -21,6 +21,14 @@ type Tag = u64;
 #[derive(Default)]
 pub(crate) struct TerranBot {
     pub(crate) build_order_index: usize,
+    pub(crate) upgrade_order_index: usize,
+}
+
+impl TerranBot {
+    pub(crate) fn log(&mut self, msg: &str) {
+        self.chat_ally(msg);
+        println!("{}", msg);
+    }
 }
 
 impl Player for TerranBot {
@@ -75,19 +83,19 @@ impl Player for TerranBot {
             }
             Event::UnitCreated(tag) => {
                 if let Some(unit) = self.units.all.get(tag).cloned() {
-                    // if unit.type_id() != self.race_values.worker {
-                    let count = self.counter().alias().all().count(unit.type_id());
-                    print!("{}", time);
-                    println!("{:?} created (count: {})", unit.type_id(), count);
-                    // }
+                    if unit.type_id() != self.race_values.worker {
+                        let count = self.counter().alias().all().count(unit.type_id());
+                        print!("{}", time);
+                        println!("{:?} created (count: {})", unit.type_id(), count);
+                    }
                 }
             }
-            Event::ConstructionStarted(tag) => {
-                if let Some(unit) = self.units.all.get(tag) {
-                    print!("{}", time);
-                    println!("{:?}: construction started", unit.type_id());
-                }
-            }
+            // Event::ConstructionStarted(tag) => {
+            //     if let Some(unit) = self.units.all.get(tag) {
+            //         print!("{}", time);
+            //         println!("{:?}: construction started", unit.type_id());
+            //     }
+            // }
             Event::ConstructionComplete(tag) => {
                 if let Some(unit) = self.units.all.get(tag).cloned() {
                     let count = self.counter().alias().all().count(unit.type_id());
@@ -114,4 +122,6 @@ pub(crate) enum BuildError {
     EndOfBuildOrder,
     NoProducer(UnitTypeId),
     InvalidArgument(UnitTypeId),
+    CannotAffordUpgrade(UpgradeId),
+    NoResearcher(UpgradeId),
 }
