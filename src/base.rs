@@ -7,30 +7,40 @@ const BUILD_ORDER: &[UID] = &[
     UID::Barracks,
     UID::Refinery,
     UID::OrbitalCommand,
-    UID::Reaper,
+    UID::BarracksReactor,
     UID::CommandCenter,
     UID::SupplyDepot,
     UID::Marine,
-    UID::Factory,
-    UID::BarracksReactor,
-    UID::CommandCenter,
-    UID::OrbitalCommand,
-    UID::Starport,
-    UID::Refinery,
-    UID::Hellion,
-    UID::Hellion,
+    UID::Marine,
+    UID::Barracks,
+    UID::Barracks,
     UID::BarracksTechLab,
+    UID::BarracksTechLab,
+    UID::Refinery,
+    UID::Refinery,
+    UID::Factory,
+    UID::EngineeringBay,
+    UID::EngineeringBay,
+    UID::Barracks,
+    UID::Barracks,
+    UID::Refinery,
+    UID::FactoryReactor,
+    UID::Starport,
+    UID::FactoryTechLab,
 ];
+
+const UPGRADE_ORDER: &[UpgradeId] = &[];
 
 impl TerranBot {
     pub(crate) fn process_base(&mut self, iteration: usize) {
         if iteration % 5 == 0 {
             self.train_workers();
         }
-        self.process_townhalls();
-        self.build_supply();
         if iteration % 5 == 1 {
-            self.build_next_in_build_order();
+            self.build_next_in_build_order().unwrap_or_default();
+            self.process_supply();
+            self.process_structure_abilities();
+            self.process_research();
         }
         self.move_workers();
     }
@@ -51,9 +61,11 @@ impl TerranBot {
         match next {
             UID::CommandCenter => self.build_expansion()?,
             UID::OrbitalCommand => self.upgrade_townhall()?,
-            gas_building if next == self.race_values.gas => self.build_gas_building()?,
+            _ if next == self.race_values.gas => self.build_gas_building()?,
             unit if next.is_unit() => self.train_unit(unit)?,
             structure if next.is_structure() => self.build_structure(structure)?,
+            addon if next.is_addon() => self.build_addon(addon)?,
+            _ => {}
         }
 
         self.subtract_resources(next, next.is_unit());
@@ -108,7 +120,7 @@ impl TerranBot {
         Ok(())
     }
 
-    fn train_unit(&self, unit: UnitTypeId) -> Result<(), BuildError> {
+    fn train_unit(&self, unit: UID) -> Result<(), BuildError> {
         let producer = *PRODUCERS.get(&unit).ok_or(BuildError::NoProducer(unit))?;
         let producer = self
             .units
@@ -123,7 +135,7 @@ impl TerranBot {
         Ok(())
     }
 
-    fn build_structure(&self, structure: UnitTypeId) -> Result<(), BuildError> {
+    fn build_structure(&self, structure: UID) -> Result<(), BuildError> {
         let main_base = self.start_location.towards(self.game_info.map_center, 10.0);
         let placement_options = PlacementOptions {
             step: if structure == self.race_values.supply {
@@ -147,157 +159,40 @@ impl TerranBot {
         Ok(())
     }
 
-    pub(crate) fn build_structures_old(&mut self) {
-        if self.counter().all().count(UID::Barracks) == 0 {
-            self.build_in_base(UID::Barracks).unwrap_or_default();
-        }
-
-        // Build at least one of each army building
-        for building in [UID::Factory, UID::Starport] {
-            if self.counter().all().count(building) == 0
-                && self
-                    .counter()
-                    .all()
-                    .tech()
-                    .count(self.race_values.start_townhall)
-                    != 1
-            {
-                self.build_in_base(building).unwrap_or_default();
-            }
-        }
-
-        // If we have begun constructing barracks, try to build refinery
-        match (
-            self.counter().all().count(UID::Barracks),
-            self.counter().count(UID::Factory),
-            self.counter().all().count(self.race_values.gas),
-        ) {
-            (1, _, 0) | (_, 1, 1) => {
-                for townhall in &self.units.my.townhalls {
-                    if let Some(geyser) = self.find_gas_placement(townhall.position()) {
-                        if let Some(builder) = self.get_closest_free_worker(geyser.position()) {
-                            builder.build_gas(geyser.tag(), false);
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-
-        if self.counter().count(UID::Starport) > 0
-            && self.minerals > 500
-            && self.counter().all().count(UID::Barracks) < 6
-        {
-            self.build_in_base(UID::Barracks)
-                .inspect_err(|e| println!("failed building barracks: {:?}", e))
-                .unwrap_or_default();
-        }
-
-        // Upgrade barracks
-        if self.counter().all().count(UID::Factory) > 0 {
-            if let Some(barracks) = self
-                .units
-                .my
-                .structures
-                .iter()
-                .idle()
-                .of_type(UID::Barracks)
-                .closest(self.start_location)
-            {
-                barracks.train(UID::BarracksReactor, false);
-                self.subtract_resources(UID::BarracksReactor, false);
-            }
-        }
-
-        if self
+    fn build_addon(&self, addon: UID) -> Result<(), BuildError> {
+        let producer = match addon {
+            UID::BarracksReactor | UID::BarracksTechLab => UID::Barracks,
+            UID::FactoryReactor | UID::FactoryTechLab => UID::Factory,
+            UID::StarportReactor | UID::StarportTechLab => UID::Starport,
+            _ => return Err(BuildError::InvalidArgument(addon)),
+        };
+        if let Some(producer) = self
             .units
             .my
             .structures
             .iter()
-            .of_type(UID::Barracks)
-            .filter(|b| b.has_reactor())
-            .count()
-            >= 2
-            && self
-                .units
-                .my
-                .structures
-                .iter()
-                .of_type(UID::Barracks)
-                .filter(|b| b.has_techlab())
-                .count()
-                < 1
-        {
-            if let Some(barracks) = self
-                .units
-                .my
-                .structures
-                .iter()
-                .idle()
-                .of_type(UID::Barracks)
-                .closest(self.start_location)
-            {
-                barracks.train(UID::BarracksTechLab, false);
-                self.subtract_resources(UID::BarracksTechLab, false);
-            }
-        }
-
-        // // Upgrade factory
-        // if let Some(factory) = self
-        //     .units
-        //     .my
-        //     .structures
-        //     .of_type(UID::Factory)
-        //     .closest(self.start_location)
-        // {
-        //     factory.train(UID::FactoryTechLab, true);
-        //     self.subtract_resources(UID::FactoryTechLab, false);
-        // }
-
-        // Build engineering bay
-        if self.counter().all().count(UID::Starport) > 0
-            && self.counter().all().count(UID::EngineeringBay) < 2
-        {
-            self.build_in_base(UID::EngineeringBay).unwrap_or_default();
-        }
-
-        for engineering_bay in self
-            .units
-            .my
-            .structures
-            .iter()
+            .of_type(producer)
             .idle()
-            .of_type(UID::EngineeringBay)
+            .closest(self.start_location)
         {
-            for upgrade in [
-                AbilityId::EngineeringBayResearchTerranInfantryWeaponsLevel1,
-                AbilityId::EngineeringBayResearchTerranInfantryWeaponsLevel2,
-                AbilityId::EngineeringBayResearchTerranInfantryWeaponsLevel3,
-                AbilityId::EngineeringBayResearchTerranInfantryArmorLevel1,
-                AbilityId::EngineeringBayResearchTerranInfantryArmorLevel2,
-                AbilityId::EngineeringBayResearchTerranInfantryArmorLevel1,
-            ] {
-                engineering_bay.use_ability(upgrade, true);
-            }
+            producer.train(addon, false);
         }
+        Ok(())
+    }
 
-        if self.counter().count(UID::EngineeringBay) > 0
-            && self.counter().all().count(UID::Armory) == 0
+    fn process_supply(&mut self) {
+        // Build supply if none is being built and we have less than 5 left
+        let structure = self.race_values.supply;
+        if self.supply_left < 5
+            && self.counter().ordered().count(structure) == 0
+            && self.can_afford(structure, false)
         {
-            self.build_in_base(UID::Armory).unwrap_or_default();
+            self.build_structure(structure).unwrap_or_default();
+            self.subtract_resources(structure, false);
         }
     }
 
-    fn build_supply(&mut self) {
-        // Build supply if none is being built and we have less than 5 left
-        if self.supply_left < 5
-            && self.counter().ordered().count(self.race_values.supply) == 0
-            && self.can_afford(self.race_values.supply, false)
-        {
-            self.build_in_base(self.race_values.supply)
-                .unwrap_or_default();
-        }
-
+    fn process_structure_abilities(&self) {
         // Lower supply
         for supply in self
             .units
@@ -320,7 +215,173 @@ impl TerranBot {
                 }
             }
         }
+
+        // Call down MULEs
+        for orbital in self.units.my.townhalls.iter().of_type(UID::OrbitalCommand) {
+            if !orbital.has_ability(AbilityId::CalldownMULECalldownMULE) {
+                continue;
+            }
+            if let Some(townhall) = self
+                .units
+                .my
+                .townhalls
+                .iter()
+                .filter(|t| t.assigned_harvesters() < t.ideal_harvesters())
+                .closest(orbital.position())
+            {
+                if let Some(mineral) = self.units.mineral_fields.closest(townhall.position()) {
+                    orbital.command(
+                        AbilityId::CalldownMULECalldownMULE,
+                        Target::Tag(mineral.tag()),
+                        false,
+                    );
+                }
+            }
+        }
     }
+
+    fn process_research(&self) {}
+
+    // pub(crate) fn build_structures_old(&mut self) {
+    //     if self.counter().all().count(UID::Barracks) == 0 {
+    //         self.build_in_base(UID::Barracks).unwrap_or_default();
+    //     }
+
+    //     // Build at least one of each army building
+    //     for building in [UID::Factory, UID::Starport] {
+    //         if self.counter().all().count(building) == 0
+    //             && self
+    //                 .counter()
+    //                 .all()
+    //                 .tech()
+    //                 .count(self.race_values.start_townhall)
+    //                 != 1
+    //         {
+    //             self.build_in_base(building).unwrap_or_default();
+    //         }
+    //     }
+
+    //     // If we have begun constructing barracks, try to build refinery
+    //     match (
+    //         self.counter().all().count(UID::Barracks),
+    //         self.counter().count(UID::Factory),
+    //         self.counter().all().count(self.race_values.gas),
+    //     ) {
+    //         (1, _, 0) | (_, 1, 1) => {
+    //             for townhall in &self.units.my.townhalls {
+    //                 if let Some(geyser) = self.find_gas_placement(townhall.position()) {
+    //                     if let Some(builder) = self.get_closest_free_worker(geyser.position()) {
+    //                         builder.build_gas(geyser.tag(), false);
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //         _ => {}
+    //     }
+
+    //     if self.counter().count(UID::Starport) > 0
+    //         && self.minerals > 500
+    //         && self.counter().all().count(UID::Barracks) < 6
+    //     {
+    //         self.build_in_base(UID::Barracks)
+    //             .inspect_err(|e| println!("failed building barracks: {:?}", e))
+    //             .unwrap_or_default();
+    //     }
+
+    //     // Upgrade barracks
+    //     if self.counter().all().count(UID::Factory) > 0 {
+    //         if let Some(barracks) = self
+    //             .units
+    //             .my
+    //             .structures
+    //             .iter()
+    //             .idle()
+    //             .of_type(UID::Barracks)
+    //             .closest(self.start_location)
+    //         {
+    //             barracks.train(UID::BarracksReactor, false);
+    //             self.subtract_resources(UID::BarracksReactor, false);
+    //         }
+    //     }
+
+    //     if self
+    //         .units
+    //         .my
+    //         .structures
+    //         .iter()
+    //         .of_type(UID::Barracks)
+    //         .filter(|b| b.has_reactor())
+    //         .count()
+    //         >= 2
+    //         && self
+    //             .units
+    //             .my
+    //             .structures
+    //             .iter()
+    //             .of_type(UID::Barracks)
+    //             .filter(|b| b.has_techlab())
+    //             .count()
+    //             < 1
+    //     {
+    //         if let Some(barracks) = self
+    //             .units
+    //             .my
+    //             .structures
+    //             .iter()
+    //             .idle()
+    //             .of_type(UID::Barracks)
+    //             .closest(self.start_location)
+    //         {
+    //             barracks.train(UID::BarracksTechLab, false);
+    //             self.subtract_resources(UID::BarracksTechLab, false);
+    //         }
+    //     }
+
+    //     // // Upgrade factory
+    //     // if let Some(factory) = self
+    //     //     .units
+    //     //     .my
+    //     //     .structures
+    //     //     .of_type(UID::Factory)
+    //     //     .closest(self.start_location)
+    //     // {
+    //     //     factory.train(UID::FactoryTechLab, true);
+    //     //     self.subtract_resources(UID::FactoryTechLab, false);
+    //     // }
+
+    //     // Build engineering bay
+    //     if self.counter().all().count(UID::Starport) > 0
+    //         && self.counter().all().count(UID::EngineeringBay) < 2
+    //     {
+    //         self.build_in_base(UID::EngineeringBay).unwrap_or_default();
+    //     }
+
+    //     for engineering_bay in self
+    //         .units
+    //         .my
+    //         .structures
+    //         .iter()
+    //         .idle()
+    //         .of_type(UID::EngineeringBay)
+    //     {
+    //         for upgrade in [
+    //             AbilityId::EngineeringBayResearchTerranInfantryWeaponsLevel1,
+    //             AbilityId::EngineeringBayResearchTerranInfantryWeaponsLevel2,
+    //             AbilityId::EngineeringBayResearchTerranInfantryWeaponsLevel3,
+    //             AbilityId::EngineeringBayResearchTerranInfantryArmorLevel1,
+    //             AbilityId::EngineeringBayResearchTerranInfantryArmorLevel2,
+    //             AbilityId::EngineeringBayResearchTerranInfantryArmorLevel1,
+    //         ] {
+    //             engineering_bay.use_ability(upgrade, true);
+    //         }
+    //     }
+
+    //     if self.counter().count(UID::EngineeringBay) > 0
+    //         && self.counter().all().count(UID::Armory) == 0
+    //     {
+    //         self.build_in_base(UID::Armory).unwrap_or_default();
+    //     }
+    // }
 
     fn get_closest_free_worker(&self, location: Point2) -> Option<&Unit> {
         self.units
@@ -433,7 +494,7 @@ impl TerranBot {
             let wanted_amount = if let (Some(ideal), Some(assigned)) =
                 (townhall.ideal_harvesters(), townhall.assigned_harvesters())
             {
-                ideal - assigned
+                ideal.saturating_sub(assigned)
             } else {
                 eprintln!("Error: tried to get assigned_harvesters from non-townhall unit");
                 continue;
@@ -450,7 +511,7 @@ impl TerranBot {
                     .units
                     .mineral_fields
                     .iter()
-                    .closer(6.0, townhall)
+                    .closer(8.0, townhall)
                     .closest(worker)
                     .expect(
                         "If ideal_harvesters > 0 then townhall should have nearby mineral resource",
@@ -465,10 +526,6 @@ impl TerranBot {
     }
 
     fn train_workers(&mut self) {
-        if !self.can_afford(self.race_values.worker, false) {
-            return;
-        }
-
         let target_amount = self.ideal_workers();
         let current_amount = self.units.my.workers.len()
             + self
@@ -479,11 +536,6 @@ impl TerranBot {
                 .filter(|t| t.is_active())
                 .count();
 
-        // Check if we have enough workers already
-        if current_amount >= target_amount {
-            return;
-        }
-
         // Build worker in each idle townhall until we have enough
         let townhalls: Vec<_> = self
             .units
@@ -492,7 +544,7 @@ impl TerranBot {
             .iter()
             .almost_idle()
             .filter(|t| t.is_ready())
-            .take(target_amount - current_amount)
+            .take(target_amount.saturating_sub(current_amount))
             .cloned()
             .collect();
         for townhall in townhalls {
@@ -503,28 +555,6 @@ impl TerranBot {
             }
             townhall.train(worker, false);
             self.subtract_resources(worker, true);
-        }
-
-        // Call down MULEs
-        for orbital in self.units.my.townhalls.iter().of_type(UID::OrbitalCommand) {
-            if orbital.has_ability(AbilityId::CalldownMULECalldownMULE) {
-                if let Some(townhall) = self
-                    .units
-                    .my
-                    .townhalls
-                    .iter()
-                    .filter(|t| t.assigned_harvesters() < t.ideal_harvesters())
-                    .closest(orbital.position())
-                {
-                    if let Some(mineral) = self.units.mineral_fields.closest(townhall.position()) {
-                        orbital.command(
-                            AbilityId::CalldownMULECalldownMULE,
-                            Target::Tag(mineral.tag()),
-                            false,
-                        );
-                    }
-                }
-            }
         }
     }
 }

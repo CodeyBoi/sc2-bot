@@ -75,11 +75,11 @@ impl Player for TerranBot {
             }
             Event::UnitCreated(tag) => {
                 if let Some(unit) = self.units.all.get(tag).cloned() {
-                    if unit.type_id() != self.race_values.worker {
-                        let count = self.counter().alias().all().count(unit.type_id());
-                        print!("{}", time);
-                        println!("{:?} created (count: {})", unit.type_id(), count);
-                    }
+                    // if unit.type_id() != self.race_values.worker {
+                    let count = self.counter().alias().all().count(unit.type_id());
+                    print!("{}", time);
+                    println!("{:?} created (count: {})", unit.type_id(), count);
+                    // }
                 }
             }
             Event::ConstructionStarted(tag) => {
@@ -113,4 +113,5 @@ pub(crate) enum BuildError {
     UnfulfilledTechRequirement(UnitTypeId),
     EndOfBuildOrder,
     NoProducer(UnitTypeId),
+    InvalidArgument(UnitTypeId),
 }
