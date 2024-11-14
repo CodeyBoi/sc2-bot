@@ -1,4 +1,4 @@
-use crate::bot::TerranBot;
+use crate::{base::END_OF_BUILD_PRIO, bot::TerranBot};
 use rust_sc2::prelude::*;
 
 use UnitTypeId as UID;
@@ -13,9 +13,24 @@ const UNITS: &[UID] = &[
 const COMBAT_UNITS: &[UID] = &[UID::Marine, UID::Hellion, UID::Cyclone];
 const SUPPORT_UNITS: &[UID] = &[UID::Medivac];
 
+trait Addon {
+    fn is_addon_for(&self, structure: UID) -> bool;
+}
+
+impl Addon for UID {
+    fn is_addon_for(&self, structure: UID) -> bool {
+        matches!(
+            (*self, structure),
+            (UID::BarracksReactor | UID::BarracksTechLab, UID::Barracks)
+                | (UID::FactoryReactor | UID::FactoryTechLab, UID::Factory)
+                | (UID::StarportReactor | UID::StarportTechLab, UID::Starport)
+        )
+    }
+}
+
 impl TerranBot {
-    pub(crate) fn process_army(&mut self, iteration: usize) {
-        if iteration % 5 == 0 {
+    pub(crate) fn process_army(&mut self, _iteration: usize) {
+        if self.time > END_OF_BUILD_PRIO {
             self.train_army();
         }
         self.scout_and_harass();
@@ -35,11 +50,20 @@ impl TerranBot {
             .cloned()
             .collect();
         for building in &buildings {
+            if !building.has_addon()
+                && self
+                    .get_current_build_prio()
+                    .is_some_and(|p| p.is_addon_for(building.type_id()))
+            {
+                continue;
+            }
             match building.type_id() {
                 UID::Barracks => {
-                    if self.get_current_build_prio().is_some_and(|p| {
-                        matches!(p, UID::BarracksReactor | UnitTypeId::BarracksTechLab)
-                    }) {
+                    if !building.has_addon()
+                        && self.get_current_build_prio().is_some_and(|p| {
+                            matches!(p, UID::BarracksReactor | UnitTypeId::BarracksTechLab)
+                        })
+                    {
                         continue;
                     }
                     let unit = if self.counter().count(UID::Reaper) < 1

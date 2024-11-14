@@ -1,39 +1,50 @@
 use crate::bot::{BuildError, TerranBot};
 use rust_sc2::prelude::*;
+use rustc_hash::FxHashMap;
 use UnitTypeId as UID;
 
-const BUILD_ORDER: &[UID] = &[
+pub(crate) const END_OF_BUILD_PRIO: f32 = 300.0;
+const BUILD_PRIO: &[UID] = &[
     UID::SupplyDepot,
     UID::Barracks,
     UID::Refinery,
-    UID::BarracksReactor,
+    UID::Refinery,
+    UID::Reaper,
     UID::OrbitalCommand,
+    UID::SupplyDepot,
+    UID::Factory,
+    UID::Reaper,
     UID::CommandCenter,
+    UID::Hellion,
+    UID::SupplyDepot,
+    UID::Reaper,
+    UID::Starport,
+    UID::Hellion,
+    UID::BarracksReactor,
+    UID::Refinery,
+    UID::FactoryTechLab,
+    UID::StarportTechLab,
+    UID::OrbitalCommand,
+    UID::Cyclone,
+    UID::Marine,
+    UID::Marine,
+    UID::Raven,
     UID::SupplyDepot,
     UID::Marine,
     UID::Marine,
-    UID::Barracks,
-    UID::Barracks,
-    UID::BarracksTechLab,
-    UID::BarracksTechLab,
-    UID::Refinery,
-    UID::Refinery,
-    UID::Factory,
-    UID::EngineeringBay,
-    UID::EngineeringBay,
-    UID::Barracks,
-    UID::Barracks,
-    UID::Refinery,
-    UID::FactoryReactor,
-    UID::Starport,
-    UID::BarracksReactor,
-    UID::BarracksReactor,
-    UID::Factory,
-    UID::FactoryTechLab,
-    UID::Armory,
+    UID::SiegeTank,
+    UID::SupplyDepot,
+    UID::Marine,
+    UID::Marine,
+    UID::Raven,
+    UID::Marine,
+    UID::Marine,
+    UID::SiegeTank,
+    UID::Marine,
+    UID::Marine,
 ];
 
-const UPGRADE_ORDER: &[UpgradeId] = &[
+const UPGRADE_PRIO: &[UpgradeId] = &[
     UpgradeId::ShieldWall,
     UpgradeId::Stimpack,
     UpgradeId::TerranInfantryWeaponsLevel1,
@@ -47,7 +58,9 @@ const UPGRADE_ORDER: &[UpgradeId] = &[
 impl TerranBot {
     pub(crate) fn process_base(&mut self, iteration: usize) {
         if iteration % 5 == 0 {
-            self.build_next_in_build_order().unwrap_or_default();
+            self.build_next_in_build_order()
+                .inspect_err(|e| println!("{:?}", e))
+                .unwrap_or_default();
             self.research_next_in_upgrade_order().unwrap_or_default();
             self.process_supply();
             self.process_structure_abilities();
@@ -81,15 +94,18 @@ impl TerranBot {
             _ => {}
         }
 
+        self.subtract_resources(next, next.is_unit());
+
         let time = format!(
             "{:0>2}:{:0>2} ",
             self.time as usize / 60,
             self.time as usize % 60
         );
-        self.log(&format!("{}{:?}: construction started", time, next));
+        self.log(&format!(
+            "{}{:?}: construction started (m: {}, g: {} {}/{})",
+            time, next, self.minerals, self.vespene, self.supply_used, self.supply_cap
+        ));
 
-        self.subtract_resources(next, next.is_unit());
-        self.build_order_index += 1;
         Ok(())
     }
 
@@ -204,8 +220,7 @@ impl TerranBot {
             .closest(self.start_location)
             .ok_or(BuildError::NoProducer(addon))?;
 
-        producer.stop(false);
-        producer.train(addon, false);
+        producer.train(addon, true);
 
         Ok(())
     }
@@ -214,8 +229,8 @@ impl TerranBot {
         // Build supply if none is being built and we have less than 5 left
         let structure = self.race_values.supply;
         let ordered = self.counter().ordered().count(structure);
-        if ((self.supply_left < 5 && ordered == 0)
-            || (self.supply_left < 2 && ordered == 1 && self.time > 180.0))
+        if self.time > END_OF_BUILD_PRIO
+            && ((self.supply_left < 5 && ordered == 0) || (self.supply_left < 2 && ordered == 1))
             && self.can_afford(structure, false)
         {
             self.build_structure(structure).unwrap_or_default();
@@ -272,8 +287,8 @@ impl TerranBot {
     }
 
     fn research_next_in_upgrade_order(&mut self) -> Result<(), BuildError> {
-        let upgrade = *UPGRADE_ORDER
-            .get(self.upgrade_order_index)
+        let upgrade = self
+            .get_current_research_prio()
             .ok_or(BuildError::EndOfBuildOrder)?;
         if !self.can_afford_upgrade(upgrade) {
             return Err(BuildError::CannotAffordUpgrade(upgrade));
@@ -303,19 +318,62 @@ impl TerranBot {
             .ok_or(BuildError::NoResearcher(upgrade))?;
         producer.research(upgrade, false);
         self.subtract_upgrade_cost(upgrade);
-        self.upgrade_order_index += 1;
+        self.upgrade_prio_index += 1;
 
         let time = format!(
-            "{:0>2}:{:0>2} ",
+            "{:0>2}:{:0>2}",
             self.time as usize / 60,
             self.time as usize % 60
         );
-        self.log(&format!("{}{:?}: research started", time, upgrade));
+        self.log(&format!("{} {:?}: research started", time, upgrade));
         Ok(())
     }
 
+    /// Returns the last item in the build priority list for which all previous items are built
     pub(crate) fn get_current_build_prio(&self) -> Option<UID> {
-        BUILD_ORDER.get(self.build_order_index).copied()
+        let mut unit_to_build = None;
+        for (i, unit) in BUILD_PRIO.iter().chain(&[UID::NotAUnit]).enumerate() {
+            // Create hashmap of each unit and their count before current unit in build prio
+            let prerequisites = ([&self.race_values.start_townhall])
+                .into_iter()
+                .chain(BUILD_PRIO.iter().take(i))
+                .fold(FxHashMap::default(), |mut acc, u| {
+                    let unit = match u {
+                        UID::OrbitalCommand
+                        | UID::OrbitalCommandFlying
+                        | UID::CommandCenterFlying => &UID::CommandCenter,
+                        _ => u,
+                    };
+                    if let Some(count) = acc.get_mut(unit) {
+                        *count += 1;
+                    } else {
+                        acc.insert(unit, 1usize);
+                    }
+                    acc
+                });
+
+            // Break if any non-unit prerequisite (units before current unit in build prio) is not met
+            if prerequisites.iter().any(|(&&prerequisite, &amount)| {
+                let count = self.counter().all().tech().count(prerequisite);
+                print!("{:?}:{}", prerequisite, count);
+                (!prerequisite.is_unit() || self.time < END_OF_BUILD_PRIO) && count < amount
+            }) {
+                println!();
+                break;
+            }
+            println!();
+            if *unit == UID::NotAUnit {
+                // Return None if all items are built
+                unit_to_build = None;
+            } else {
+                unit_to_build = Some(unit);
+            }
+        }
+        unit_to_build.copied()
+    }
+
+    pub(crate) fn get_current_research_prio(&self) -> Option<UpgradeId> {
+        UPGRADE_PRIO.get(self.upgrade_prio_index).copied()
     }
 
     // pub(crate) fn build_structures_old(&mut self) {
@@ -628,6 +686,7 @@ impl TerranBot {
                 .iter()
                 .filter(|t| t.is_active())
                 .count();
+        let current_amount = self.supply_workers;
 
         // Build worker in each idle townhall until we have enough
         let townhalls: Vec<_> = self
@@ -637,7 +696,7 @@ impl TerranBot {
             .iter()
             .almost_idle()
             .filter(|t| t.is_ready())
-            .take(target_amount.saturating_sub(current_amount))
+            .take(target_amount.saturating_sub(current_amount as usize))
             .cloned()
             .collect();
         for townhall in townhalls {

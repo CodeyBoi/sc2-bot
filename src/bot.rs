@@ -20,8 +20,7 @@ type Tag = u64;
 #[bot]
 #[derive(Default)]
 pub(crate) struct TerranBot {
-    pub(crate) build_order_index: usize,
-    pub(crate) upgrade_order_index: usize,
+    pub(crate) upgrade_prio_index: usize,
 }
 
 impl TerranBot {
@@ -85,8 +84,8 @@ impl Player for TerranBot {
                 if let Some(unit) = self.units.all.get(tag).cloned() {
                     if unit.type_id() != self.race_values.worker {
                         let count = self.counter().alias().all().count(unit.type_id());
-                        print!("{}", time);
-                        println!("{:?} created (count: {})", unit.type_id(), count);
+                        // print!("{}", time);
+                        // println!("{:?} created (count: {})", unit.type_id(), count);
                     }
                 }
             }
@@ -99,8 +98,14 @@ impl Player for TerranBot {
             Event::ConstructionComplete(tag) => {
                 if let Some(unit) = self.units.all.get(tag).cloned() {
                     let count = self.counter().alias().all().count(unit.type_id());
-                    print!("{}", time);
-                    println!("{:?} finished! (count: {})", unit.type_id(), count,);
+                    // print!("{}", time);
+                    // println!(
+                    //     "{:?} finished! (count: {}, supply: {}/{})",
+                    //     unit.type_id(),
+                    //     count,
+                    //     self.supply_used,
+                    //     self.supply_cap
+                    // );
                 }
             }
             Event::RandomRaceDetected(race) => {
