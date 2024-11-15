@@ -120,7 +120,7 @@ impl Player for TerranBot {
 
 #[derive(Debug)]
 pub(crate) enum BuildError {
-    NoSuitableLocation(UnitTypeId, Point2),
+    NoSuitableLocation(UnitTypeId),
     CannotAfford(UnitTypeId),
     NoSuitableWorker,
     UnfulfilledTechRequirement(UnitTypeId),
